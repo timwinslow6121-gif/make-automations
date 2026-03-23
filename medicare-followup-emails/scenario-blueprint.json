@@ -1,0 +1,127 @@
+{
+  "makeScenarioId": 4498293,
+  "makeWebhookId": 2052526,
+  "makeWebhookUrl": "https://hook.us2.make.com/3ucls337pltgztbppd0yfk86kdfxiwxp",
+  "name": "Medicare Appointment Follow-Up Emails",
+  "description": "Triggered by Fireflies webhook when a transcript is ready. Fetches full transcript with AI summary, looks up the Calendly booking by client email, formats a follow-up email via Claude, and sends it to both the client and agent.",
+  "blueprint": {
+    "name": "Medicare Appointment Follow-Up Emails",
+    "metadata": {
+      "version": 1,
+      "scenario": {
+        "roundtrips": 1,
+        "maxErrors": 3,
+        "autoCommit": true,
+        "autoCommitTriggerLast": true,
+        "sequential": false,
+        "confidential": false,
+        "dataloss": false,
+        "dlq": false,
+        "freshVariables": false
+      }
+    },
+    "flow": [
+      {
+        "id": 1,
+        "module": "gateway:CustomWebHook",
+        "version": 1,
+        "label": "Fireflies Webhook Trigger",
+        "description": "Fires when Fireflies sends a 'Transcription completed' webhook. Payload field {{1.meetingId}} is the Fireflies transcript ID.",
+        "parameters": {
+          "hook": 2052526,
+          "maxResults": 1
+        },
+        "mapper": {}
+      },
+      {
+        "id": 2,
+        "module": "fireflies-ai:executeGraphQLQuery",
+        "version": 1,
+        "label": "Get Transcript + AI Summary",
+        "description": "Fetches full transcript data including AI summary, action items, participants, and transcript URL.",
+        "parameters": {
+          "__IMTCONN__": 7999335
+        },
+        "mapper": {
+          "method": "POST",
+          "queryBody": "query GetTranscript($id: String!) { transcript(id: $id) { id title date participants host_email organizer_email transcript_url summary { action_items keywords overview shorthand_bullet } } }",
+          "operationName": "GetTranscript",
+          "variablesDataSource": "array",
+          "variables": [
+            { "key": "id", "value": "{{1.meetingId}}" }
+          ]
+        },
+        "output_mapping_notes": {
+          "client_email": "{{2.body.data.transcript.participants[1]}}",
+          "meeting_title": "{{2.body.data.transcript.title}}",
+          "meeting_date": "{{2.body.data.transcript.date}}",
+          "summary": "{{2.body.data.transcript.summary.overview}}",
+          "action_items": "{{2.body.data.transcript.summary.action_items}}",
+          "transcript_url": "{{2.body.data.transcript.transcript_url}}"
+        }
+      },
+      {
+        "id": 3,
+        "module": "calendly:listEvents",
+        "version": 2,
+        "label": "Look Up Calendly Booking",
+        "description": "Searches Calendly for the most recent booking for this client by email. Returns appointment type name and scheduled time.",
+        "parameters": {
+          "__IMTCONN__": 5645310
+        },
+        "mapper": {
+          "user": "https://api.calendly.com/users/3ad0a112-b37e-4f52-a94d-f3f3cf6a7da6",
+          "invitee_email": "{{2.body.data.transcript.participants[1]}}",
+          "sort": "start_time:desc",
+          "status": "",
+          "limit": 1
+        }
+      },
+      {
+        "id": 4,
+        "module": "anthropic-claude:simpleTextPrompt",
+        "version": 1,
+        "label": "Format Email with Claude",
+        "description": "Sends Fireflies summary + action items to Claude Sonnet 4.6. Output is a complete warm email body ready to send.",
+        "parameters": {},
+        "mapper": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 1500,
+          "textPrompt": "INSTRUCTIONS: You are a warm, professional Medicare insurance agent assistant. Format the following meeting notes into a friendly follow-up email suitable for a Medicare-eligible client (typically 65+). Use plain English. Avoid jargon. Do not use bullet points for the main body - write in short paragraphs. End with a clear numbered list of next steps if any exist. Sign off as Tim Winslow from Founders Insurance Agency. Do not use em dashes.\n\nClient Name: {{2.body.data.transcript.title}}\nMeeting Date: {{2.body.data.transcript.date}}\nAppointment Type: {{3.name}}\n\nMEETING SUMMARY:\n{{2.body.data.transcript.summary.overview}}\n\nACTION ITEMS FROM MEETING:\n{{2.body.data.transcript.summary.action_items}}\n\nWrite the complete, ready-to-send email body only (no subject line). Begin with a warm greeting using the client's first name. Keep it conversational, genuine, and easy to read. Do not make it sound like AI wrote it."
+        }
+      },
+      {
+        "id": 5,
+        "module": "google-email:sendAnEmail",
+        "version": 4,
+        "label": "Send Email to Client",
+        "description": "Sends the formatted follow-up email to the client. Requires a Gmail connection (google-email type) — must be added manually in Make.",
+        "parameters": {
+          "__IMTCONN__": "NEEDS_GMAIL_CONNECTION"
+        },
+        "mapper": {
+          "to": ["{{2.body.data.transcript.participants[1]}}"],
+          "subject": "A note from our appointment - {{split(2.body.data.transcript.title; \" \")[1]}}",
+          "bodyType": "rawHtml",
+          "content": "{{4.result}}"
+        }
+      },
+      {
+        "id": 6,
+        "module": "google-email:sendAnEmail",
+        "version": 4,
+        "label": "Send Recap Copy to Agent",
+        "description": "Sends the same formatted email plus the Fireflies transcript link to tim@foundersinsuranceagency.com. Requires Gmail connection.",
+        "parameters": {
+          "__IMTCONN__": "NEEDS_GMAIL_CONNECTION"
+        },
+        "mapper": {
+          "to": ["tim@foundersinsuranceagency.com"],
+          "subject": "Appointment recap - {{2.body.data.transcript.title}} - {{formatDate(2.body.data.transcript.date; \"MM/DD/YYYY\")}}",
+          "bodyType": "rawHtml",
+          "content": "{{4.result}}<br><br>---<br>Full Fireflies Transcript: {{2.body.data.transcript.transcript_url}}"
+        }
+      }
+    ]
+  }
+}
