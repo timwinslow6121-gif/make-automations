@@ -101,7 +101,7 @@
         },
         "mapper": {
           "to": ["{{2.body.data.transcript.participants[1]}}"],
-          "subject": "A note from our appointment - {{split(2.body.data.transcript.title; \" \")[1]}}",
+          "subject": "A note from our appointment - {{first(split(2.body.data.transcript.title; \" \"))}}",
           "bodyType": "rawHtml",
           "content": "{{4.result}}"
         }
